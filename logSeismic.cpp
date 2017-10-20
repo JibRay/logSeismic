@@ -2,10 +2,12 @@
 // NOTICE: This must run as root.
 
 #include <iostream>
+#include <fstream>
 #include <string.h>
 #include <iomanip>
 #include <errno.h>
 #include <signal.h>
+#include <sys/stat.h>
 #include <deque>
 #include <pthread.h>
 #include <chrono>
@@ -34,9 +36,10 @@ struct Reading {
 
 static const int VERSION = 1;
 
-static const char *rootPath = "/home/pi";
-bool run = true;
-pthread_t fileThread;
+static const char    *rootPath = "/home/pi";
+bool                  run = true;
+pthread_t             fileThread;
+pthread_mutex_t       fileMutex;
 std::deque< Reading > readings;
 
 //////////////////////////////////////////////////////////////////////////////
@@ -177,10 +180,93 @@ double getCurrentTime() {
   return duration_cast<duration<double>>(dth).count();
 }
 
+// Create a file path from basePath and the time value t. Return the
+// new path in path. The file name is YYYY-MM-DD.ibsd. YYYY-MM-DD is the
+// day that include t. Return the time_t value that is the start of the
+// day specified in the file name.
+time_t readingFilePath(time_t t, char *basePath, char *path) {
+  struct tm *pt;
+
+  pt = gmtime(&t);
+  sprintf(path, "%s/%04d-%02d-%2d.ibsd",
+          basePath, 1900 + pt->tm_year, 1 + pt->tm_mon, pt->tm_mday);
+  pt->tm_hour = pt->tm_min = pt->tm_sec = 0;
+  return mktime(pt);
+}
+
+// This thread writes readings to the output files.
 void *fileFunction(void *param) {
-  char currentDirectoryPath[200], currentFileName[200];
-  strcpy(currentDirectoryPath, rootPath);
+  std::deque< Reading > fileReadings;
+  struct stat info;
+  char directoryPath[200], path[200];
+  int i, count;
+  time_t t, fileStartTime, fileEndTime;
+  struct tm *pt;
+  std::ofstream readingFile;
+  uint8_t recordBuffer[11];
+
+  // Create any missing directories.
+  strcpy(directoryPath, rootPath);
+  strcat(directoryPath, "/seismometer");
+  if (stat(directoryPath, &info) != 0 || !S_ISDIR(info.st_mode))
+    mkdir(directoryPath, S_IRWXG | S_IRWXU | S_IRWXO);
+  strcat(directoryPath, "/readings");
+  if (stat(directoryPath, &info) != 0 || !S_ISDIR(info.st_mode))
+    mkdir(directoryPath, S_IRWXG | S_IRWXU | S_IRWXO);
+
+  // Get path to first file.
+  time(&t);
+  fileStartTime = readingFilePath(t, directoryPath, path);
+  fileEndTime = fileStartTime + 86400;
+
+  sleep(15);
   while (run) {
+    pthread_mutex_lock(&fileMutex);
+    // Transfer all readings from global queue to local queue.
+    count = (int)readings.size();
+    if (count > 0) {
+      for (i = 0; i < count; i++) {
+        fileReadings.push_back(readings.front());
+        readings.pop_front();
+      }
+    }
+    pthread_mutex_unlock(&fileMutex);
+
+    if (fileReadings.size() > 0) {
+      readingFile.open(path, std::ios::out | std::ios::app
+                       | std::ios::binary);
+      std::deque< Reading >::iterator r;
+      int n = 0;
+      for (r = fileReadings.begin(); r != fileReadings.end(); r++, n++) {
+        uint32_t msec =
+          (uint32_t)(1000.0 * (r->time - (double)fileStartTime));
+        int16_t x = r->values.x;
+        int16_t y = r->values.y;
+        int16_t z = r->values.z;
+        time_t tr = (time_t)(uint32_t)r->time;
+        if (tr >= fileEndTime) {
+          readingFile.close();
+          fileStartTime = readingFilePath(tr, directoryPath, path);
+          fileEndTime = fileStartTime + 86400;
+          readingFile.open(path, std::ios::out | std::ios::app
+                           | std::ios::binary);
+        }
+        recordBuffer[0] = msec & 0xff;
+        recordBuffer[1] = (msec >> 8) & 0xff;
+        recordBuffer[2] = (msec >> 16) & 0xff;
+        recordBuffer[3] = (msec >> 24) & 0xff;
+        recordBuffer[4] = x & 0xff;
+        recordBuffer[5] = (x >> 8) & 0xff;
+        recordBuffer[6] = y & 0xff;
+        recordBuffer[7] = (y >> 8) & 0xff;
+        recordBuffer[8] = z & 0xff;
+        recordBuffer[9] = (z >> 8) &0xff;
+        readingFile.write((char*)recordBuffer, 10);
+      }
+      readingFile.close();
+      fileReadings.clear();
+    }
+    sleep(5);
   }
   return NULL;
 }
@@ -232,6 +318,9 @@ int main() {
 
   std::cout << "Start ADXL345 accelerometer" << std::endl;
   adxl345Start();
+
+  // Initialize the file mutex.
+  fileMutex = PTHREAD_MUTEX_INITIALIZER;
 
   std::cout << "Start the file thread" << std::endl;
   pthread_create(&fileThread, NULL, fileFunction, (void*)NULL);
