@@ -18,7 +18,7 @@ import time
 
 #============================================================================
 # Globals
-version = 2
+version = 3
 
 #============================================================================
 # Functions
@@ -36,13 +36,13 @@ def getFileTime(path):
   return time.mktime(ts)
 
 def displayHelp():
-  print 'seismicReader', version
+  print 'seismicReader version', version
   print 'Usage:'
   print '  seismicReader [-h] [-c] [-f] file-name'
   print 'Where:'
   print '  -h = display this help'
   print '  -c = use commas instead of spaces for column separator'
-  print '  -f = output fraction seconds in separate column'
+  print '  -f = output fractional seconds in separate column'
 
 #============================================================================
 # Main program

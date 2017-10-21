@@ -34,13 +34,14 @@ struct Reading {
   Values values;
 };
 
-static const int VERSION = 1;
+static const int VERSION = 2;
 
 static const char    *rootPath = "/home/pi";
-bool                  run = true;
+bool                  initialized = false, run = true;
 pthread_t             fileThread;
 pthread_mutex_t       fileMutex;
 std::deque< Reading > readings;
+Values                offsets;
 
 //////////////////////////////////////////////////////////////////////////////
 // Functions
@@ -172,12 +173,25 @@ void ctrl_c_handler(int s) {
   run = false;
 }
 
-double getCurrentTime() {
+double getTimeZoneOffset() {
+  struct tm ts;
+  ts.tm_year = 117;
+  ts.tm_mon = 1;
+  ts.tm_mday = 1;
+
+  time_t utc = timegm(&ts);
+  time_t local = timelocal(&ts);
+
+  return (double)(local - utc);
+}
+
+// Return high-resolution UTC time as a double.
+double getCurrentTime(double timeZoneOffset) {
   using namespace std::chrono;
 
   high_resolution_clock::time_point th = high_resolution_clock::now();
   high_resolution_clock::duration dth = th.time_since_epoch();
-  return duration_cast<duration<double>>(dth).count();
+  return timeZoneOffset + duration_cast<duration<double>>(dth).count();
 }
 
 // Create a file path from basePath and the time value t. Return the
@@ -194,7 +208,17 @@ time_t readingFilePath(time_t t, char *basePath, char *path) {
   return mktime(pt);
 }
 
-// This thread writes readings to the output files.
+// This thread writes readings to the output files. It wakes up every 5
+// seconds and checks the global queue for readings. All readings found
+// are transfered to a local queue and then written to the output file.
+// Each file record is 10 byes. First four are unsigned number of
+// milliseconds since the start of the UTC day. This is followed by three
+// 16 bit signed values, X, Y and Z acceleration. To convert these values
+// to milli-g, multiply by 0.24375.
+//
+// The file name is year-month-day.ibsd. When UTC time in the next record
+// rolls over from one day to the next the current file is closed and a
+// new one is created.
 void *fileFunction(void *param) {
   std::deque< Reading > fileReadings;
   struct stat info;
@@ -219,7 +243,10 @@ void *fileFunction(void *param) {
   fileStartTime = readingFilePath(t, directoryPath, path);
   fileEndTime = fileStartTime + 86400;
 
-  sleep(15);
+  // Wait for the main thread to initialize.
+  while (!initialized)
+    sleep(1);
+
   while (run) {
     pthread_mutex_lock(&fileMutex);
     // Transfer all readings from global queue to local queue.
@@ -233,20 +260,21 @@ void *fileFunction(void *param) {
     pthread_mutex_unlock(&fileMutex);
 
     if (fileReadings.size() > 0) {
+      // Local queue contains readings.
       readingFile.open(path, std::ios::out | std::ios::app
                        | std::ios::binary);
       std::deque< Reading >::iterator r;
-      int n = 0;
-      for (r = fileReadings.begin(); r != fileReadings.end(); r++, n++) {
+      for (r = fileReadings.begin(); r != fileReadings.end(); r++) {
         uint32_t msec =
           (uint32_t)(1000.0 * (r->time - (double)fileStartTime));
-        int16_t x = r->values.x;
-        int16_t y = r->values.y;
-        int16_t z = r->values.z;
-        time_t tr = (time_t)(uint32_t)r->time;
-        if (tr >= fileEndTime) {
+        int16_t x = r->values.x - offsets.x;
+        int16_t y = r->values.y - offsets.y;
+        int16_t z = r->values.z - offsets.z;
+        time_t rTime = (time_t)(uint32_t)r->time;
+        if (rTime >= fileEndTime) {
+          // We've reached the end of the day.
           readingFile.close();
-          fileStartTime = readingFilePath(tr, directoryPath, path);
+          fileStartTime = readingFilePath(rTime, directoryPath, path);
           fileEndTime = fileStartTime + 86400;
           readingFile.open(path, std::ios::out | std::ios::app
                            | std::ios::binary);
@@ -278,8 +306,9 @@ int main() {
   uint8_t output[100];
   uint8_t input[100];
   Values  values[33];
-  Values  offsets;
   Reading reading;
+
+  double  timeZoneOffset = getTimeZoneOffset();
   
   // Use ctrl-c to quit. Setup handler.
   struct sigaction ctrl_c_action;
@@ -337,23 +366,25 @@ int main() {
   while(run) {
     if ((count = adxl345GetReadings(values)) > 0) {
       for (int i = 0; i < count; i++) {
-        // This is a crude 16 stage filter. Replace with FIR.
+        // This is a 16 stage filter (FIR with constant coefficients).
         reading.values.x += values[i].x;
         reading.values.y += values[i].y;
         reading.values.z += values[i].z;
         if (++samples >= 16) {
           if (zeroed) {
-            reading.time = getCurrentTime();
+            reading.time = getCurrentTime(timeZoneOffset);
             readings.push_back(reading);
           } else {
             offsets.x += reading.values.x;
             offsets.y += reading.values.y;
             offsets.z += reading.values.z;
             if (++zeroCount >= 50) {
-              offsets.x /= 50;
-              offsets.y /= 50;
-              offsets.z /= 50;
+              offsets.x /= zeroCount;
+              offsets.y /= zeroCount;
+              offsets.z /= zeroCount;
+              // Zeroing has completed.
               zeroed = true;
+              initialized = true;
               std::cout << "Logging readings" << std::endl;
             }
           }
