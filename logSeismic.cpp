@@ -1,6 +1,9 @@
 // logSeismic.cpp
 // NOTICE: This must run as root.
 
+#include <sys/types.h>
+#include <stdlib.h>
+#include <syslog.h>
 #include <iostream>
 #include <fstream>
 #include <string.h>
@@ -34,7 +37,7 @@ struct Reading {
   Values values;
 };
 
-static const int VERSION = 2;
+static const int VERSION = 3;
 
 static const char    *rootPath = "/home/pi";
 bool                  initialized = false, run = true;
@@ -45,6 +48,28 @@ Values                offsets;
 
 //////////////////////////////////////////////////////////////////////////////
 // Functions
+
+void writeLog(const char *message) {
+  char line[200];
+  std::ofstream logFile;
+  struct stat info;
+
+  if (stat("/var/log/logSeismic", &info) != 0 || !S_ISDIR(info.st_mode))
+    mkdir("/var/log/logSeismic",
+      S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH);
+
+  struct tm *ts;
+  time_t t;
+  time(&t);
+  ts = localtime(&t);
+  sprintf(line, "%4d-%02d-%02d %02d:%02d:%02d %s\n",
+    ts->tm_year, ts->tm_mon, ts->tm_mday, ts->tm_hour, ts->tm_min, ts->tm_sec,
+    message);
+  logFile.open("/var/log/logSeismic/logSeismic.log",
+    std::ios::out | std::ios::app);
+  logFile << line;
+  logFile.close();
+}
 
 // This delay function is needed to meet the CE off time requirements.
 int delay(int t) {
@@ -101,21 +126,6 @@ uint8_t *adxl345ReadRegisters(int reg, uint8_t *values, int count) {
   return values;
 }
 
-// Use for debug.
-void adxl345DisplayRegisters(void) {
-  uint8_t input[100];
-
-  std::cout << "Reg  Value" << std::endl;
-  std::cout << "----+-----" << std::endl;
-  for (int i = 0; i < 58; i++) {
-    if (i < 1 || i > 28) {
-      uint8_t v = adxl345ReadOne(i);
-      std::cout << std::hex << "0x" << i
-                << " 0x" << (int)v << std::endl;
-    }
-  }
-}
-
 // Setup the accelerometer.
 void adxl345Setup(void) {
   bcm2835_gpio_fsel(RPI_BPLUS_GPIO_J8_24, BCM2835_GPIO_FSEL_OUTP);
@@ -169,8 +179,17 @@ int adxl345GetReadings(Values *values) {
 }
 
 // Ctrl-C signal call-back.
+/*
 void ctrl_c_handler(int s) {
   run = false;
+}
+*/
+void signalHandler(int n) {
+  switch (n) {
+    case SIGTERM:
+      run = false;
+      break;
+  }
 }
 
 double getTimeZoneOffset() {
@@ -307,56 +326,96 @@ int main() {
   uint8_t input[100];
   Values  values[33];
   Reading reading;
+  char    message[200];
 
+  setlogmask(LOG_UPTO(LOG_NOTICE));
+  openlog("logSeismic", LOG_CONS | LOG_NDELAY | LOG_PERROR | LOG_PID,
+          LOG_USER);
+
+  pid_t pid, sid;
+
+  // Fork the parent process.
+  pid = fork();
+  if (pid < 0) {
+    syslog(LOG_ERR, "process fork failed");
+    exit(1);
+  }
+  if (pid > 0)
+    exit(0);  // Close parent process, continue only with daemon.
+
+  // Change file mask.
+  umask(0);
+
+  // Create a new signature ID for the child process.
+  sid = setsid();
+  if (sid < 0) {
+    syslog(LOG_ERR, "setsid() failed");
+    exit(1);
+  }
+
+  // Change directory to root.
+  if (chdir("/") < 0) {
+    syslog(LOG_ERR, "chdir to root directory failed");
+    exit(1);
+  }
+
+  // Close std file descriptors.
+  close(STDIN_FILENO);
+  close(STDOUT_FILENO);
+  close(STDERR_FILENO);
+
+  sprintf(message, "Start logSeismic version %d", VERSION);
+  syslog(LOG_NOTICE, message);
   double  timeZoneOffset = getTimeZoneOffset();
   
-  // Use ctrl-c to quit. Setup handler.
+  // Setup signal handlers.
+  signal(SIGTERM, signalHandler);
+  /*
   struct sigaction ctrl_c_action;
   ctrl_c_action.sa_handler = ctrl_c_handler;
   sigemptyset(&ctrl_c_action.sa_mask);
   ctrl_c_action.sa_flags = 0;
   sigaction(SIGINT, &ctrl_c_action, NULL);
+  */
   
-  std::cout << "testADXL345 version " << VERSION << std::endl;
-  std::cout << std::endl
-            << " *** Type ctrl-C (^C) to quit *** "
-            << std::endl << std::endl;
-  std::cout << "Initialize BCM2835 I/O module" << std::endl;
+  sprintf(message, "logSeismic version %d", VERSION);
+  writeLog(message);
+  writeLog("Initialize BCM2835 I/O module");
   if (!bcm2835_init()) {
-    std::cout << "bcm2835_init() failed" << std::endl;
+    writeLog("bcm2835_init() failed");
   }
 
-  std::cout << "Begin SPI" << std::endl;
+  writeLog("Begin SPI");
   if (!bcm2835_spi_begin()) {
-    std::cout << "bcm2835_begin() failed" << std::endl;
+    writeLog("bcm2835_begin() failed");
   }
 
-  std::cout << "Set SPI options" << std::endl;
+  writeLog("Set SPI options");
   adxl345Setup();
 
   // Check that the ADXL345 is connected.
   uint8_t id = adxl345ReadOne(0);
   if (id != 0xe5) {
-    std::cout << "ADXL345 device is not connected, quiting" << std::endl;
-    std::cout << "End BCM2835" << std::endl;
+    writeLog("ADXL345 device is not connected, quiting");
+    writeLog("End BCM2835");
     bcm2835_spi_end();
-    std::cout << "Close BCM2835" << std::endl;
+    writeLog("Close BCM2835");
     bcm2835_close();
-    return 1;
+    exit(1);
   }
 
-  std::cout << "Start ADXL345 accelerometer" << std::endl;
+  writeLog("Start ADXL345 accelerometer");
   adxl345Start();
 
   // Initialize the file mutex.
   fileMutex = PTHREAD_MUTEX_INITIALIZER;
 
-  std::cout << "Start the file thread" << std::endl;
+  writeLog("Start the file thread");
   pthread_create(&fileThread, NULL, fileFunction, (void*)NULL);
 
   // Use the first 50 readings to set the offset values.
   bool zeroed = false;
-  std::cout << "Zeroing..." << std::endl;
+  writeLog("Zeroing...");
 
   reading.values.x = reading.values.y = reading.values.z = 0;
   offsets.x = offsets.y = offsets.z = 0;
@@ -385,7 +444,7 @@ int main() {
               // Zeroing has completed.
               zeroed = true;
               initialized = true;
-              std::cout << "Logging readings" << std::endl;
+              writeLog("Logging readings");
             }
           }
           reading.values.x = reading.values.y = reading.values.z = 0;
@@ -395,16 +454,17 @@ int main() {
     }
   }
 
-  std::cout << std::endl
-            << "Wait for file thread to exit..." << std::endl;
+  writeLog("Wait for file thread to exit...");
   pthread_join(fileThread, NULL);
 
-  std::cout << "Stop ADXL345" << std::endl;
+  writeLog("Stop ADXL345");
   adxl345Stop();
-  std::cout << "End BCM2835" << std::endl;
+  writeLog("End BCM2835");
   bcm2835_spi_end();
-  std::cout << "Close BCM2835" << std::endl;
+  writeLog("Close BCM2835");
   bcm2835_close();
-  return 0;
+  syslog(LOG_NOTICE, "logSiesmic stopped");
+  closelog();
+  exit(0);
 }
 
