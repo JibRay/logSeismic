@@ -1,12 +1,10 @@
 #!/usr/bin/env python
+# Read and display contents of seismic ibsd file.
 #
 # Usage:
 #  seismicReader.py [-c] <file-name>
 #
-# where:
-#   -c  Use commas to separate fields.
-#
-# Read and display contents of seismic ibsd file.
+# See displayHelp for description of arguments.
 
 import sys
 import string
@@ -18,7 +16,7 @@ import time
 
 #============================================================================
 # Globals
-version = 3
+version = 4
 
 #============================================================================
 # Functions
@@ -43,6 +41,7 @@ def displayHelp():
   print '  -h = display this help'
   print '  -c = use commas instead of spaces for column separator'
   print '  -f = output fractional seconds in separate column'
+  print 'Output is time, X, Y, Z where X,Y,Z are in micro-g.'
 
 #============================================================================
 # Main program
