@@ -37,11 +37,13 @@ struct Reading {
   Values values;
 };
 
-static const int VERSION = 3;
+static const int VERSION = 4;
 
 static const char    *rootPath = "/home/pi";
-bool                  initialized = false, run = true;
-pthread_t             fileThread;
+char                  catalogPath[200];
+char                  newFilePath[200];
+bool                  initialized = false, run = true, newDay = false;
+pthread_t             fileThread, catalogThread;
 pthread_mutex_t       fileMutex;
 std::deque< Reading > readings;
 Values                offsets;
@@ -146,8 +148,8 @@ void adxl345Start() {
   adxl345Write(0x31, 0b00001000);
   // Setup the FIFO: stream mode, no trigger, 16 samples.
   adxl345Write(0x38, 0b10001000);
-  // Setup BW rate: 100 samples per second.
-  adxl345Write(0x2c, 10);
+  // Setup BW rate: 1600 samples per second.
+  adxl345Write(0x2c, 0x0f);
   // Setup power control: no inactivity, no auto-sleep, measure, no sleep,
   // wakeup bit = 00. The measure bit starts the sampling.
   adxl345Write(0x2d, 0b00001000);
@@ -227,6 +229,17 @@ time_t readingFilePath(time_t t, char *basePath, char *path) {
   return mktime(pt);
 }
 
+void *catalogFunction(void *param) {
+
+  while (run) {
+    sleep(60);
+    if (newDay) {
+      newDay = false;
+    }
+  }
+  return NULL;
+}
+
 // This thread writes readings to the output files. It wakes up every 5
 // seconds and checks the global queue for readings. All readings found
 // are transfered to a local queue and then written to the output file.
@@ -256,6 +269,8 @@ void *fileFunction(void *param) {
   strcat(directoryPath, "/readings");
   if (stat(directoryPath, &info) != 0 || !S_ISDIR(info.st_mode))
     mkdir(directoryPath, S_IRWXG | S_IRWXU | S_IRWXO);
+
+  strcpy(catalogPath, directoryPath);
 
   // Get path to first file.
   time(&t);
@@ -291,8 +306,12 @@ void *fileFunction(void *param) {
         int16_t z = r->values.z - offsets.z;
         time_t rTime = (time_t)(uint32_t)r->time;
         if (rTime >= fileEndTime) {
-          // We've reached the end of the day.
+          // We've reached the end of the day. Let the catalog thread
+          // know about the newly completed day file.
           readingFile.close();
+          strcpy(newFilePath, path);
+          newDay = true;
+
           fileStartTime = readingFilePath(rTime, directoryPath, path);
           fileEndTime = fileStartTime + 86400;
           readingFile.open(path, std::ios::out | std::ios::app
@@ -412,6 +431,8 @@ int main() {
 
   writeLog("Start the file thread");
   pthread_create(&fileThread, NULL, fileFunction, (void*)NULL);
+  writeLog("Start the catalog thread");
+  pthread_create(&catalogThread, NULL, catalogFunction, (void*)NULL);
 
   // Use the first 50 readings to set the offset values.
   bool zeroed = false;
@@ -456,6 +477,8 @@ int main() {
 
   writeLog("Wait for file thread to exit...");
   pthread_join(fileThread, NULL);
+  writeLog("Wait for catalog thread to exit...");
+  pthread_join(catalogThread, NULL);
 
   writeLog("Stop ADXL345");
   adxl345Stop();
