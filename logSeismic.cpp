@@ -37,7 +37,7 @@ struct Reading {
   Values values;
 };
 
-static const int VERSION = 5;
+static const int VERSION = 6;
 
 static const char    *rootPath = "/home/pi";
 char                  catalogPath[200];
@@ -65,7 +65,8 @@ void writeLog(const char *message) {
   time(&t);
   ts = localtime(&t);
   sprintf(line, "%4d-%02d-%02d %02d:%02d:%02d %s\n",
-    ts->tm_year, ts->tm_mon, ts->tm_mday, ts->tm_hour, ts->tm_min, ts->tm_sec,
+    ts->tm_year + 1900, ts->tm_mon + 1, ts->tm_mday,
+    ts->tm_hour, ts->tm_min, ts->tm_sec,
     message);
   logFile.open("/var/log/logSeismic/logSeismic.log",
     std::ios::out | std::ios::app);
