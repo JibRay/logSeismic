@@ -16,17 +16,18 @@ import time
 
 #============================================================================
 # Globals
-version = 4
+version = 5
 
 #============================================================================
 # Functions
 
 def getFileTime(path):
   i = string.rfind(path, '/')
+  fileName = ''
   if i >= 0:
     fileName = path[i+1:]
   else:
-    filename = path
+    fileName = path
   i = string.find(fileName, '.')
   if i >= 0:
     fileName = fileName[:i]
