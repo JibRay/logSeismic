@@ -37,7 +37,7 @@ struct Reading {
   Values values;
 };
 
-static const int VERSION = 4;
+static const int VERSION = 5;
 
 static const char    *rootPath = "/home/pi";
 char                  catalogPath[200];
@@ -299,17 +299,12 @@ void *fileFunction(void *param) {
                        | std::ios::binary);
       std::deque< Reading >::iterator r;
       for (r = fileReadings.begin(); r != fileReadings.end(); r++) {
-        uint32_t msec =
-          (uint32_t)(1000.0 * (r->time - (double)fileStartTime));
-        int16_t x = r->values.x - offsets.x;
-        int16_t y = r->values.y - offsets.y;
-        int16_t z = r->values.z - offsets.z;
         time_t rTime = (time_t)(uint32_t)r->time;
         if (rTime >= fileEndTime) {
           // We've reached the end of the day. Let the catalog thread
           // know about the newly completed day file.
           readingFile.close();
-          strcpy(newFilePath, path);
+          strcpy(newFilePath, path); // Path of latest completed file.
           newDay = true;
 
           fileStartTime = readingFilePath(rTime, directoryPath, path);
@@ -317,6 +312,11 @@ void *fileFunction(void *param) {
           readingFile.open(path, std::ios::out | std::ios::app
                            | std::ios::binary);
         }
+        uint32_t msec =
+          (uint32_t)(1000.0 * (r->time - (double)fileStartTime));
+        int16_t x = r->values.x - offsets.x;
+        int16_t y = r->values.y - offsets.y;
+        int16_t z = r->values.z - offsets.z;
         recordBuffer[0] = msec & 0xff;
         recordBuffer[1] = (msec >> 8) & 0xff;
         recordBuffer[2] = (msec >> 16) & 0xff;
