@@ -1,6 +1,9 @@
 // logSeismic.cpp
 // NOTICE: This must run as root.
 
+// If the following is defined launch as a daemon process.
+// #define DAEMON
+
 #include <sys/types.h>
 #include <stdlib.h>
 #include <syslog.h>
@@ -182,11 +185,10 @@ int adxl345GetReadings(Values *values) {
 }
 
 // Ctrl-C signal call-back.
-/*
 void ctrl_c_handler(int s) {
   run = false;
 }
-*/
+
 void signalHandler(int n) {
   switch (n) {
     case SIGTERM:
@@ -233,7 +235,7 @@ time_t readingFilePath(time_t t, char *basePath, char *path) {
 void *catalogFunction(void *param) {
 
   while (run) {
-    sleep(60);
+    sleep(10);
     if (newDay) {
       newDay = false;
     }
@@ -318,6 +320,9 @@ void *fileFunction(void *param) {
         int16_t x = r->values.x - offsets.x;
         int16_t y = r->values.y - offsets.y;
         int16_t z = r->values.z - offsets.z;
+        x > 0 ? ++offsets.x : --offsets.x;
+        y > 0 ? ++offsets.y : --offsets.y;
+        z > 0 ? ++offsets.z : --offsets.z;
         recordBuffer[0] = msec & 0xff;
         recordBuffer[1] = (msec >> 8) & 0xff;
         recordBuffer[2] = (msec >> 16) & 0xff;
@@ -348,6 +353,7 @@ int main() {
   Reading reading;
   char    message[200];
 
+#ifdef DAEMON
   setlogmask(LOG_UPTO(LOG_NOTICE));
   openlog("logSeismic", LOG_CONS | LOG_NDELAY | LOG_PERROR | LOG_PID,
           LOG_USER);
@@ -386,58 +392,107 @@ int main() {
 
   sprintf(message, "Start logSeismic version %d", VERSION);
   syslog(LOG_NOTICE, message);
-  double  timeZoneOffset = getTimeZoneOffset();
   
   // Setup signal handlers.
   signal(SIGTERM, signalHandler);
-  /*
+#else
   struct sigaction ctrl_c_action;
   ctrl_c_action.sa_handler = ctrl_c_handler;
   sigemptyset(&ctrl_c_action.sa_mask);
   ctrl_c_action.sa_flags = 0;
   sigaction(SIGINT, &ctrl_c_action, NULL);
-  */
+#endif  // DAEMON
   
+  double  timeZoneOffset = getTimeZoneOffset();
+
+#ifdef DAEMON
   sprintf(message, "logSeismic version %d", VERSION);
   writeLog(message);
   writeLog("Initialize BCM2835 I/O module");
+#else
+  std::cout << "logSeismic version " << VERSION << std::endl
+            << "Initialize BCM2835 I/O module" << std::endl;
+#endif
   if (!bcm2835_init()) {
+#ifdef DAEMON
     writeLog("bcm2835_init() failed");
+#else
+    std::cout << "bcm2835_init() failed" << std::endl;
+#endif
+    exit(1);
   }
 
+#ifdef DAEMON
   writeLog("Begin SPI");
+#else
+  std::cout << "Begin SPI" << std::endl;
+#endif
   if (!bcm2835_spi_begin()) {
-    writeLog("bcm2835_begin() failed");
+#ifdef DAEMON
+    writeLog("bcm2835_spi_begin() failed");
+#else
+    std::cout << "bcm2835_spi_begin() failed" << std::endl;
+#endif
+    exit(1);
   }
 
+#ifdef DAEMON
   writeLog("Set SPI options");
+#else
+  std::cout << "Set SPI options" << std::endl;
+#endif
   adxl345Setup();
 
   // Check that the ADXL345 is connected.
   uint8_t id = adxl345ReadOne(0);
   if (id != 0xe5) {
+#ifdef DAEMON
     writeLog("ADXL345 device is not connected, quiting");
     writeLog("End BCM2835");
+#else
+    std::cout << "ADXL345 device is not connected, quiting" << std::endl
+              << "End BCM2835" << std::endl;
+#endif
     bcm2835_spi_end();
+#ifdef DAEMON
     writeLog("Close BCM2835");
+#else
+    std::cout << "Close BCM2835" << std::endl;
+#endif
     bcm2835_close();
     exit(1);
   }
 
+#ifdef DAEMON
   writeLog("Start ADXL345 accelerometer");
+#else
+  std::cout << "Start ADXL345 accelerometer" << std::endl;
+#endif
   adxl345Start();
 
   // Initialize the file mutex.
   fileMutex = PTHREAD_MUTEX_INITIALIZER;
 
+#ifdef DAEMON
   writeLog("Start the file thread");
+#else
+  std::cout << "Start the file thread" << std::endl;
+#endif
   pthread_create(&fileThread, NULL, fileFunction, (void*)NULL);
+#ifdef DAEMON
   writeLog("Start the catalog thread");
+#else
+  std::cout << "Start the catalog thread" << std::endl;
+#endif
   pthread_create(&catalogThread, NULL, catalogFunction, (void*)NULL);
 
   // Use the first 50 readings to set the offset values.
   bool zeroed = false;
+#ifdef DAEMON
   writeLog("Zeroing...");
+#else
+  std::cout << "Zeroing..." << std::endl;
+#endif
 
   reading.values.x = reading.values.y = reading.values.z = 0;
   offsets.x = offsets.y = offsets.z = 0;
@@ -459,14 +514,18 @@ int main() {
             offsets.x += reading.values.x;
             offsets.y += reading.values.y;
             offsets.z += reading.values.z;
-            if (++zeroCount >= 50) {
+            if (++zeroCount >= 500) {
               offsets.x /= zeroCount;
               offsets.y /= zeroCount;
               offsets.z /= zeroCount;
               // Zeroing has completed.
               zeroed = true;
               initialized = true;
+#ifdef DAEMON
               writeLog("Logging readings");
+#else
+              std::cout << "Logging readings" << std::endl;
+#endif
             }
           }
           reading.values.x = reading.values.y = reading.values.z = 0;
@@ -476,19 +535,41 @@ int main() {
     }
   }
 
+#ifdef DAEMON
   writeLog("Wait for file thread to exit...");
+#else
+  std::cout << std::endl << "Wait for file thread to exit..." << std::endl;
+#endif
   pthread_join(fileThread, NULL);
+#ifdef DAEMON
   writeLog("Wait for catalog thread to exit...");
+#else
+  std::cout << "Wait for catalog thread to exit..." << std::endl;
+#endif
   pthread_join(catalogThread, NULL);
 
+#ifdef DAEMON
   writeLog("Stop ADXL345");
+#else
+  std::cout << "Stop ADXL345" << std::endl;
+#endif
   adxl345Stop();
+#ifdef DAEMON
   writeLog("End BCM2835");
+#else
+  std::cout << "End BCM2835" << std::endl;
+#endif
   bcm2835_spi_end();
+#ifdef DAEMON
   writeLog("Close BCM2835");
+#else
+  std::cout << "Close BCM2835" << std::endl;
+#endif
   bcm2835_close();
+#ifdef DAEMON
   syslog(LOG_NOTICE, "logSiesmic stopped");
   closelog();
+#endif
   exit(0);
 }
 

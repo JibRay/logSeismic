@@ -10,6 +10,10 @@ OBJ = logSeismic.o /usr/local/lib/libbcm2835.a
 logSeismic: $(OBJ)
 	$(CC) -o $@ $^ $(CFLAGS)
 
+daemon: CFLAGS += -D DAEMON
+daemon: $(OBJ)
+	$(CC) -o logSeismicd $^ $(CFLAGS)
+
 .PHONY: clean
 
 clean:
