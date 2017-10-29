@@ -41,6 +41,7 @@ struct Reading {
 };
 
 static const int VERSION = 6;
+static const int DRIFT_CORRECTION = 8;
 
 static const char    *rootPath = "/home/pi";
 char                  catalogPath[200];
@@ -320,9 +321,11 @@ void *fileFunction(void *param) {
         int16_t x = r->values.x - offsets.x;
         int16_t y = r->values.y - offsets.y;
         int16_t z = r->values.z - offsets.z;
-        x > 0 ? ++offsets.x : --offsets.x;
-        y > 0 ? ++offsets.y : --offsets.y;
-        z > 0 ? ++offsets.z : --offsets.z;
+        /*
+        x > 0 ? offsets.x += DRIFT_CORRECTION : offsets.x -= DRIFT_CORRECTION;
+        y > 0 ? offsets.y += DRIFT_CORRECTION : offsets.y -= DRIFT_CORRECTION;
+        z > 0 ? offsets.z += DRIFT_CORRECTION : offsets.z -= DRIFT_CORRECTION;
+        */
         recordBuffer[0] = msec & 0xff;
         recordBuffer[1] = (msec >> 8) & 0xff;
         recordBuffer[2] = (msec >> 16) & 0xff;
