@@ -2,7 +2,7 @@
 // NOTICE: This must run as root.
 
 // If the following is defined launch as a daemon process.
-// #define DAEMON
+#define DAEMON
 
 #include <sys/types.h>
 #include <stdlib.h>

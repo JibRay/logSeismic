@@ -40,6 +40,7 @@ def displayHelp():
   print '  seismicReader [-h] [-c] [-f] file-name'
   print 'Where:'
   print '  -h = display this help'
+  print '  -s = display only statistics as output'
   print '  -c = use commas instead of spaces for column separator'
   print '  -f = output fractional seconds in separate column'
   print 'Output is time, X, Y, Z where X,Y,Z are in micro-g.'
