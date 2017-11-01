@@ -50,6 +50,7 @@ def displayHelp():
 
 useCommas = False
 separateFractionalSecondsColumn = False
+onlyStatistics = False
 
 if len(sys.argv) < 2:
   displayHelp()
@@ -64,10 +65,14 @@ for i in range(len(sys.argv)):
     useCommas = True
   if sys.argv[i] == '-f':
     separateFractionalSecondsColumn = True
+  if sys.argv[i] == '-s':
+    onlyStatistics = True
 
 fileIndex = len(sys.argv) - 1
 inputFile = open(sys.argv[fileIndex], 'rb')
 fileTime = getFileTime(sys.argv[fileIndex])
+maxAcceleration = [0.0, 0.0, 0.0]
+netAcceleration = [0.0, 0.0, 0.0]
 try:
   while 1:
     record = struct.unpack('Ihhh', inputFile.read(10))
@@ -76,27 +81,48 @@ try:
     x = float(record[1]) * 0.24375
     y = float(record[2]) * 0.24375
     z = float(record[3]) * 0.24375
-    if separateFractionalSecondsColumn:
-      if useCommas:
-        fs = '{:4d}-{:02d}-{:02d},{:02d}:{:02d}:{:02d},{:0.3f},' \
-          + '{:7.2f},{:7.2f},{:7.2f}'
+    netAcceleration[0] += x
+    netAcceleration[1] += y
+    netAcceleration[2] += z
+    if abs(x) > maxAcceleration[0]:
+      maxAcceleration[0] = abs(x)
+    if abs(y) > maxAcceleration[1]:
+      maxAcceleration[1] = abs(y)
+    if abs(z) > maxAcceleration[2]:
+      maxAcceleration[2] = abs(z)
+    if not onlyStatistics:
+      if separateFractionalSecondsColumn:
+        if useCommas:
+          fs = '{:4d}-{:02d}-{:02d},{:02d}:{:02d}:{:02d},{:0.3f},' \
+            + '{:7.2f},{:7.2f},{:7.2f}'
+        else:
+          fs = '{:4d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d} {:0.3f} ' \
+            + '{:7.2f} {:7.2f} {:7.2f}'
+        print fs.format(ts.tm_year, ts.tm_mon, ts.tm_mday, ts.tm_hour, \
+          ts.tm_min, ts.tm_sec, float(record[0] % 1000) / 1000.0, x, y, z)
       else:
-        fs = '{:4d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d} {:0.3f} ' \
-          + '{:7.2f} {:7.2f} {:7.2f}'
-      print fs.format(ts.tm_year, ts.tm_mon, ts.tm_mday, ts.tm_hour, \
-        ts.tm_min, ts.tm_sec, float(record[0] % 1000) / 1000.0, x, y, z)
-    else:
-      if useCommas:
-        fs = '{:4d}-{:02d}-{:02d},{:02d}:{:02d}:{:02d}.{:03d},' \
-          + '{:7.2f},{:7.2f},{:7.2f}'
-      else:
-        fs = '{:4d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}.{:03d} ' \
-          + '{:7.2f} {:7.2f} {:7.2f}'
-      print fs.format(ts.tm_year, ts.tm_mon, ts.tm_mday, ts.tm_hour, \
-        ts.tm_min, ts.tm_sec, record[0] % 1000, x, y, z)
+        if useCommas:
+          fs = '{:4d}-{:02d}-{:02d},{:02d}:{:02d}:{:02d}.{:03d},' \
+            + '{:7.2f},{:7.2f},{:7.2f}'
+        else:
+          fs = '{:4d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}.{:03d} ' \
+            + '{:7.2f} {:7.2f} {:7.2f}'
+        print fs.format(ts.tm_year, ts.tm_mon, ts.tm_mday, ts.tm_hour, \
+          ts.tm_min, ts.tm_sec, record[0] % 1000, x, y, z)
 except:
   print
-  #type, value, traceback = sys.exc_info()
-  #print type, value
+  # If there is no output, uncomment the following two lines to find out
+  # what is wrong.
+  type, value, traceback = sys.exc_info()
+  print type, value
 inputFile.close()
+
+print 'Net accelerations (milli-G):'
+print '    X =', netAcceleration[0]
+print '    Y =', netAcceleration[1]
+print '    Z =', netAcceleration[2]
+print 'Max accelerations (milli-G):'
+print '    X =', maxAcceleration[0]
+print '    Y =', maxAcceleration[1]
+print '    Z =', maxAcceleration[2]
 
